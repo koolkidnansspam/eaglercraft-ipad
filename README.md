@@ -1,6 +1,6 @@
 # Eaglercraft-Clients
 The best eaglercraft clients
-Sub to Me https://www.youtube.com/@FIamePvP
+Sub to Me https://www.youtube.com/@koolkidexemc
 
 ## iPad / touch controls
 Every client has an on-screen touch overlay that appears once you tap into the game.
