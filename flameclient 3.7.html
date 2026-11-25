@@ -32871,6 +32871,7 @@ window.addEventListener("load", () => {
     q: [81, 'KeyQ', 'q'],
     t: [84, 'KeyT', 't'],
     esc: [27, 'Escape', 'Escape'],
+    rshift: [16, 'ShiftRight', 'Shift', 2],
     f5: [116, 'F5', 'F5'],
     enter: [13, 'Enter', 'Enter'],
     slash: [191, 'Slash', '/']
@@ -32905,7 +32906,7 @@ window.addEventListener("load", () => {
   }
   function tap(name) {
     keyEvent('keydown', KEYS[name]);
-    setTimeout(function () { keyEvent('keyup', KEYS[name]); }, 40);
+    setTimeout(function () { keyEvent('keyup', KEYS[name]); }, 90);
   }
   function releaseAll() {
     for (var k in held) if (held[k]) release(k);
@@ -32917,21 +32918,23 @@ window.addEventListener("load", () => {
     return document.querySelector('#game_frame canvas') || document.querySelector('canvas');
   }
 
-  function mouseEvent(type, button, mx, my) {
+  function mouseEvent(type, button, mx, my, cx, cy) {
     var c = canvas();
     if (!c) return;
     var r = c.getBoundingClientRect();
+    var x = cx === undefined ? r.left + r.width / 2 : cx;
+    var y = cy === undefined ? r.top + r.height / 2 : cy;
     var ev = new MouseEvent(type, {
       button: button || 0,
-      clientX: r.left + r.width / 2,
-      clientY: r.top + r.height / 2,
+      clientX: x,
+      clientY: y,
       bubbles: true,
       cancelable: true
     });
     define(ev, 'movementX', mx || 0);
     define(ev, 'movementY', my || 0);
-    define(ev, 'offsetX', r.width / 2);
-    define(ev, 'offsetY', r.height / 2);
+    define(ev, 'offsetX', x - r.left);
+    define(ev, 'offsetY', y - r.top);
     c.dispatchEvent(ev);
   }
   var mouseHeld = { 0: false, 2: false };
@@ -33013,6 +33016,8 @@ window.addEventListener("load", () => {
     'html,body{touch-action:none;overscroll-behavior:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}' +
     '#etc-hud{position:fixed;inset:0;z-index:2147483000;pointer-events:none;display:none;-webkit-user-select:none;user-select:none;touch-action:none;font-family:system-ui,-apple-system,sans-serif}' +
     '#etc-hud.on{display:block}' +
+    '#etc-menu{position:fixed;inset:0;z-index:2147483000;pointer-events:none;display:none;-webkit-user-select:none;user-select:none;touch-action:none;font-family:system-ui,-apple-system,sans-serif}' +
+    '#etc-menu.on{display:block}' +
     '#etc-hud .zone{position:absolute;pointer-events:auto;touch-action:none}' +
     '#etc-left{left:0;top:18%;bottom:0;width:42%}' +
     '#etc-right{right:0;top:12%;bottom:0;width:58%}' +
@@ -33068,11 +33073,12 @@ window.addEventListener("load", () => {
     btn.addEventListener('touchcancel', f, { passive: false });
   }
 
-  function button(label, style, cls, down, up) {
+  var menu = el('div', 'etc-menu');
+  function button(label, style, cls, down, up, parent) {
     var b = el('div', null, 'etc-btn ' + (cls || ''), label);
     b.style.cssText = style;
     hold(b, down, up || function () {});
-    hud.appendChild(b);
+    (parent || hud).appendChild(b);
     return b;
   }
 
@@ -33233,11 +33239,83 @@ window.addEventListener("load", () => {
   right.addEventListener('touchend', rightEnd, { passive: false });
   right.addEventListener('touchcancel', rightEnd, { passive: false });
 
+  /* ---- menu mode (no pointer lock): explicit touch -> mouse instead of relying on iOS-synthesized mouse events ---- */
+  var rmbNext = false;
+  var rmbBtn = button('R-CLICK', 'width:78px;height:40px;right:calc(10px + ' + SA_R + ');top:calc(64px + env(safe-area-inset-top,0px))',
+    'sq', function () {
+      rmbNext = !rmbNext;
+      rmbBtn.classList.toggle('on', rmbNext);
+    }, null, menu);
+  function wheel(dy) {
+    var c = canvas();
+    if (!c) return;
+    c.dispatchEvent(new WheelEvent('wheel', { deltaY: dy, bubbles: true, cancelable: true }));
+  }
+  button('▲', 'width:78px;height:40px;right:calc(10px + ' + SA_R + ');top:calc(112px + env(safe-area-inset-top,0px))',
+    'sq', function () { wheel(-120); }, null, menu);
+  button('▼', 'width:78px;height:40px;right:calc(10px + ' + SA_R + ');top:calc(160px + env(safe-area-inset-top,0px))',
+    'sq', function () { wheel(120); }, null, menu);
+
+  var menuId = null;
+  var menuBtn = 0;
+  var menuDownAt = 0;
+  var menuLast = null;
+  function isUi(t) {
+    return !!(t && t.closest && t.closest('#etc-hud,#etc-menu,#etc-mini,#etc-panel,#etc-text'));
+  }
+  document.addEventListener('touchstart', function (e) {
+    if (document.pointerLockElement || menuId !== null || isUi(e.target)) return;
+    // only take over touches on the game canvas; leave the launch page / any other DOM alone
+    if (!e.target || e.target.tagName !== 'CANVAS') return;
+    var t = e.changedTouches[0];
+    e.preventDefault();
+    menuId = t.identifier;
+    menuBtn = rmbNext ? 2 : 0;
+    rmbNext = false;
+    rmbBtn.classList.remove('on');
+    menuDownAt = Date.now();
+    menuLast = t;
+    mouseEvent('mousemove', 0, 0, 0, t.clientX, t.clientY);
+    mouseEvent('mousedown', menuBtn, 0, 0, t.clientX, t.clientY);
+  }, { passive: false, capture: true });
+  document.addEventListener('touchmove', function (e) {
+    if (menuId === null) return;
+    for (var i = 0; i < e.changedTouches.length; i++) {
+      var t = e.changedTouches[i];
+      if (t.identifier !== menuId) continue;
+      e.preventDefault();
+      mouseEvent('mousemove', menuBtn, t.clientX - menuLast.clientX, t.clientY - menuLast.clientY, t.clientX, t.clientY);
+      menuLast = t;
+    }
+  }, { passive: false, capture: true });
+  function menuEnd(e) {
+    if (menuId === null) return;
+    for (var i = 0; i < e.changedTouches.length; i++) {
+      var t = e.changedTouches[i];
+      if (t.identifier !== menuId) continue;
+      e.preventDefault();
+      // keep the press down for at least ~one frame so a polling game loop always sees it
+      var wait = Math.max(0, 70 - (Date.now() - menuDownAt));
+      var b = menuBtn;
+      setTimeout(function () {
+        mouseEvent('mouseup', b, 0, 0, t.clientX, t.clientY);
+        menuId = null;
+      }, wait);
+    }
+  }
+  document.addEventListener('touchend', menuEnd, { passive: false, capture: true });
+  document.addEventListener('touchcancel', menuEnd, { passive: false, capture: true });
+
   var mini = el('div', 'etc-mini');
   var kbdBtn = el('div', null, 'etc-btn', '&#9000;');
   var gearBtn = el('div', null, 'etc-btn', '&#9881;');
+  var escBtn = el('div', null, 'etc-btn sq', 'ESC');
+  var modBtn = el('div', null, 'etc-btn sq', 'MOD');
+  escBtn.style.cssText = modBtn.style.cssText = 'width:46px;font-size:12px';
   mini.appendChild(kbdBtn);
   mini.appendChild(gearBtn);
+  mini.appendChild(escBtn);
+  mini.appendChild(modBtn);
 
   var panel = el('div', 'etc-panel');
   panel.innerHTML =
@@ -33265,6 +33343,7 @@ window.addEventListener("load", () => {
   function refresh() {
     var locked = !!document.pointerLockElement;
     hud.classList.toggle('on', locked && !controlsHidden);
+    menu.classList.toggle('on', !locked);
     if (!locked) {
       endStick();
       releaseAll();
@@ -33275,6 +33354,7 @@ window.addEventListener("load", () => {
 
   function mount() {
     document.body.appendChild(hud);
+    document.body.appendChild(menu);
     document.body.appendChild(mini);
     document.body.appendChild(panel);
     document.body.appendChild(textBar);
@@ -33302,6 +33382,8 @@ window.addEventListener("load", () => {
       refresh();
     });
     tapEl(gearBtn, function () { toggle(panel, 'block'); });
+    tapEl(escBtn, function () { tap('esc'); });
+    tapEl(modBtn, function () { tap('rshift'); });
 
     var ti = textBar.querySelector('#etc-ti');
     ['keydown', 'keyup', 'keypress'].forEach(function (t) {
@@ -33331,6 +33413,7 @@ window.addEventListener("load", () => {
       }
     });
     refresh();
+    setInterval(refresh, 500);
   }
 
   document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
